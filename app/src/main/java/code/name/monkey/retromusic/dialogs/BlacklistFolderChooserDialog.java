@@ -28,42 +28,54 @@ public class BlacklistFolderChooserDialog extends DialogFragment implements Mate
 
     private File parentFolder;
     private File[] parentContents;
-    private boolean canGoUp = false;
 
     private FolderCallback callback;
 
-    String initialPath = Environment.getExternalStorageDirectory().getAbsolutePath();
+    File initialPath = Environment.getExternalStorageDirectory().getAbsoluteFile();
 
     private String[] getContentsArray() {
         if (parentContents == null) {
-            if (canGoUp) {
-                return new String[]{".."};
-            }
             return new String[]{};
         }
-        String[] results = new String[parentContents.length + (canGoUp ? 1 : 0)];
-        if (canGoUp) {
-            results[0] = "..";
-        }
+        String[] results = new String[parentContents.length];
         for (int i = 0; i < parentContents.length; i++) {
-            results[canGoUp ? i + 1 : i] = parentContents[i].getName();
+            results[i] = parentContents[i].getName();
         }
         return results;
     }
 
     private File[] listFiles() {
+        /*
+         * Memorize the initial path and inject the path folders
+         * again, even if android is not listing them in .listFiles()
+         */
+        File memorizedFolder = null;
+        if(initialPath.getAbsolutePath().startsWith(parentFolder.getAbsolutePath())){
+            String path = parentFolder.toURI().relativize(initialPath.toURI()).getPath();
+            String[] split = path.split(File.separator);
+            if(split.length > 0 && split[0].length() > 0) {
+                memorizedFolder = new File(parentFolder, split[0]);
+            }
+        }
+
+
         File[] contents = parentFolder.listFiles();
         List<File> results = new ArrayList<>();
         if (contents != null) {
             for (File fi : contents) {
+                if(memorizedFolder != null && memorizedFolder.equals(fi)){
+                    memorizedFolder = null;
+                }
                 if (fi.isDirectory()) {
                     results.add(fi);
                 }
             }
-            Collections.sort(results, new FolderSorter());
-            return results.toArray(new File[results.size()]);
         }
-        return null;
+        if(memorizedFolder != null) {
+            results.add(memorizedFolder);
+        }
+        Collections.sort(results, new FolderSorter());
+        return results.toArray(new File[0]);
     }
 
     public static BlacklistFolderChooserDialog create() {
@@ -87,10 +99,9 @@ public class BlacklistFolderChooserDialog extends DialogFragment implements Mate
             savedInstanceState = new Bundle();
         }
         if (!savedInstanceState.containsKey("current_path")) {
-            savedInstanceState.putString("current_path", initialPath);
+            savedInstanceState.putString("current_path", initialPath.toString());
         }
-        parentFolder = new File(savedInstanceState.getString("current_path", File.pathSeparator));
-        checkIfCanGoUp();
+        parentFolder = new File(savedInstanceState.getString("current_path", initialPath.getAbsolutePath()));
         parentContents = listFiles();
         MaterialDialog.Builder builder =
                 new MaterialDialog.Builder(getActivity())
@@ -102,39 +113,27 @@ public class BlacklistFolderChooserDialog extends DialogFragment implements Mate
                             dismiss();
                             callback.onFolderSelection(BlacklistFolderChooserDialog.this, parentFolder);
                         })
+                        .onNeutral((materialDialog, dialogAction) -> {
+                            onUpwards();
+                        })
                         .onNegative((materialDialog, dialogAction) -> dismiss())
                         .positiveText(R.string.add_action)
+                        .neutralText("Up")
                         .negativeText(android.R.string.cancel);
-        if (File.pathSeparator.equals(initialPath)) {
-            canGoUp = false;
-        }
         return builder.build();
     }
 
-    @Override
-    public void onSelection(MaterialDialog materialDialog, View view, int i, CharSequence s) {
-        if (canGoUp && i == 0) {
+    public void onUpwards() {
+        if(parentFolder.getParentFile() != null) {
             parentFolder = parentFolder.getParentFile();
-            if (parentFolder.getAbsolutePath().equals("/storage/emulated")) {
-                parentFolder = parentFolder.getParentFile();
-            }
-            canGoUp = parentFolder.getParent() != null;
-        } else {
-            parentFolder = parentContents[canGoUp ? i - 1 : i];
-            canGoUp = true;
-            if (parentFolder.getAbsolutePath().equals("/storage/emulated")) {
-                parentFolder = Environment.getExternalStorageDirectory();
-            }
         }
         reload();
     }
 
-    private void checkIfCanGoUp() {
-        try {
-            canGoUp = parentFolder.getPath().split(File.pathSeparator).length > 1;
-        } catch (IndexOutOfBoundsException e) {
-            canGoUp = false;
-        }
+    @Override
+    public void onSelection(MaterialDialog materialDialog, View view, int i, CharSequence s) {
+        parentFolder = parentContents[i];
+        reload();
     }
 
     private void reload() {
